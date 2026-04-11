@@ -47,7 +47,7 @@ type Agent struct {
 	ToolCallRunningMutex *sync.Mutex // 强类型，消除 interface{} 类型断言 panic
 }
 
-func Create(_template *template.Template, tools ...ToolInterface) (a *Agent) {
+func NewAgent(_template *template.Template, tools ...ToolInterface) (a *Agent) {
 	a = &Agent{
 		Models:         []*Model{ModelDefault},
 		toolsCallbacks: map[string]func(Param interface{}, CallMemory map[string]any) error{},

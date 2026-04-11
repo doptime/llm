@@ -1,4 +1,4 @@
-module llm
+module github.com/doptime/llm
 
 go 1.24.5
 
