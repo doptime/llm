@@ -92,7 +92,7 @@ func NewModel(baseURL, apiKey, modelName string) *Model {
 	}
 
 	client := openai.NewClientWithConfig(config)
-	return &Model{
+	model := &Model{
 		Client:          client,
 		Name:            modelName,
 		ApiKey:          apiKey,
@@ -100,6 +100,13 @@ func NewModel(baseURL, apiKey, modelName string) *Model {
 		avgResponseTime: 600 * time.Second,
 		lastReceived:    time.Now(), // 修复：避免首次 time.Since(零值) 导致 requestPerMin 计算溢出
 	}
+	model.RegisterToMap()
+
+	return model
+}
+func (m *Model) RegisterToMap() *Model {
+	ModelsMap[m.Name] = m
+	return m
 }
 func (m *Model) WithToolsInSystemPrompt() *Model {
 	m.ToolInPrompt = &ToolInPrompt{InSystemPrompt: true}
@@ -125,6 +132,8 @@ func (m *Model) WithSysPrompt(message string) *Model {
 	m.SystemMessage = message
 	return m
 }
+
+var ModelsMap = map[string]*Model{}
 
 var (
 	//https://tbnx.plus7.plus/token

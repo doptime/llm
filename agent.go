@@ -100,6 +100,16 @@ func (a *Agent) WithModels(Model ...*Model) *Agent {
 	a.Models = Model
 	return a
 }
+func (a *Agent) WithModelsNamed(Models ...string) *Agent {
+	for _, name := range Models {
+		m, ok := ModelsMap[name]
+		if !ok {
+			panic(fmt.Sprintf("model %q not found in ModelsMap", name))
+		}
+		a.Models = append(a.Models, m)
+	}
+	return a
+}
 
 func (a *Agent) WithCallback(callback func(ctx context.Context, inputs string) error) *Agent {
 	a.CallBack = callback
