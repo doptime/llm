@@ -96,11 +96,11 @@ func (a *Agent) Clone() *Agent {
 
 	return &b
 }
-func (a *Agent) WithModels(Model ...*Model) *Agent {
+func (a *Agent) UseModels(Model ...*Model) *Agent {
 	a.Models = Model
 	return a
 }
-func (a *Agent) WithModelsNamed(Models ...string) *Agent {
+func (a *Agent) UseModelsNamed(Models ...string) *Agent {
 	for _, name := range Models {
 		m, ok := ModelsMap[name]
 		if !ok {
