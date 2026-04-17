@@ -25,8 +25,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/doptime/llm/agent"
-	"github.com/doptime/llm/llm"
+	"github.com/doptime/llm"
 )
 
 // VerdictPayload 定义了 LLM 返回的结构化裁决结果
@@ -62,10 +61,10 @@ func main() {
 `))
 
 	// 4. 初始化 Agent
-	// 注意：此处使用了 github.com/doptime/llm/agent 包
-	judgeAgent := agent.Create(tpl).
+	// 注意：此处使用了 github.com/doptime/llm 包
+	judgeAgent := llm.NewAgent(tpl).
 		UseTools(evalTool).
-		WithModels(llm.ModelDefault)
+		UseModels(llm.ModelDefault)
 
 	// 5. 执行调用
 	fmt.Println("🛰️  正在解析代码并生成进化策略...")
