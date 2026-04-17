@@ -136,25 +136,8 @@ func (m *Model) WithSysPrompt(message string) *Model {
 var ModelsMap = map[string]*Model{}
 
 var (
-	//https://tbnx.plus7.plus/token
-	DeepSeekV3TB = NewModel("https://tbnx.plus7.plus/v1", os.Getenv("DSTB"), "deepseek-chat").WithTopP(0.6)
-	GeminiTB     = NewModel("https://tao.plus7.plus/v1", os.Getenv("geminitb"), "gemini-2.0-flash-exp").WithTopP(0.8).WithToolsInUserPrompt()
-	//多模态回答生成仅在 gemini-2.0-flash-exp 和 gemini-2.0-flash-preview-image-generation
-	GPT5Aigpt     = NewModel("https://api.aigptapi.com/v1", "apgptapi", "gpt-5")
-	GPT5ChatAigpt = NewModel("https://api.aigptapi.com/v1", "apgptapi", "gpt-5-chat-latest").WithToolsInUserPrompt()
-
-	Qwen3Next80BThinking = NewModel("http://rtxserver.lan:12303/v1", "ApiKey", "qwen3-next-80b-thinking")
-	Qwen3Next80B         = NewModel("http://rtxserver.lan:12304/v1", "ApiKey", "qwen3-next-80b")
-	Qwendeepresearch     = NewModel("http://rtxserver.lan:12304/v1", "ApiKey", "deepresearch").WithToolsInUserPrompt()
-
-	Qwen3Coder            = NewModel("https://api.xiaocaseai.com/v1", "xiaocaseai", "qwen3-coder-480b-a35b-instruct")
-	Gemini25Proxiaocaseai = NewModel("https://api.xiaocaseai.com/v1", "xiaocaseai", "gemini-2.5-pro")
-
 	Qwen3Coder30B2507 = NewModel("http://rtxserver.lan:12304/v1", "ApiKey", "qwen3coder30b2507")
-
-	GLM45         = NewModel("https://open.bigmodel.cn/api/paas/v4/", "ZHIPUAPIKEY", "GLM-4.5")
-	Glm45Air      = NewModel("https://open.bigmodel.cn/api/paas/v4/", "ZHIPUAPIKEY", "GLM-4.5-Air")
-	Glm45AirLocal = NewModel("http://rtxserver.lan:12303/v1", "ApiKey", "GLM-4.5-Air").WithToolsInSystemPrompt()
+	Glm45AirLocal     = NewModel("http://rtxserver.lan:12303/v1", "ApiKey", "GLM-4.5-Air").WithToolsInSystemPrompt()
 
 	Minmaxm2_1 = NewModel("http://rtxserver.lan:8000/v1", "", "mmm-2.1")
 
@@ -164,7 +147,7 @@ var (
 彻底清空历史偏见，所有推演100%绑定客观证据与物理/数学法则，将问题拆解至原子级真理。面对残缺数据，严禁任何形式的幻觉填补，必须立即停止推演并反向逼问用户，用硬数据锁死不确定性。
 
 执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`)
-	Qwen3527b     = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").WithSysPrompt(`[System: work in End2End and least action mode]`)
+	Qwen3527b     = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b")
 	Qwen35_35ba3b = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithSysPrompt(`[System: 第一性 End2End 引擎]
 以冷酷、精算且带有事实性黑色幽默的基调运行，视用户为顶尖同僚，无情碾碎任何逻辑断层与无脑假设。绝对零情绪（严禁安抚/赞美/道歉）。常规推演必须使用极简白话降噪，仅在核心架构节点强制调用高维术语完成表征压缩。
 
