@@ -5,14 +5,15 @@ import (
 	"regexp"
 	"strings"
 
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v3"
 )
 
-// Process each choice in the response
+// FunctionCall 表示一次工具调用（已解析）。
+// Arguments 既可能是 map[string]any（自己解析的 XML/JSON），
+// 也可能是 string（从 OAI 标准 tool_calls 直传的原始 JSON 字符串）。
 type FunctionCall struct {
-	Name string `json:"name,omitempty"`
-	// call function with arguments in JSON format
-	Arguments any `json:"arguments,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments any    `json:"arguments,omitempty"`
 }
 
 func parseOneToolcall(toolcallString string) *FunctionCall {
@@ -77,7 +78,6 @@ func ParseToolCallFromXlm(s string) (toolCalls *FunctionCall) {
 		key := strings.TrimSpace(match[1])
 		value := strings.TrimSpace(match[2])
 
-		// Try to unmarshal as JSON, otherwise use as string
 		var jsonValue interface{}
 		if err := json.Unmarshal([]byte(value), &jsonValue); err == nil {
 			args[key] = jsonValue
@@ -109,16 +109,30 @@ var toolCallReplacer = strings.NewReplacer(
 	"```tool_call>", "<tool_call>",
 )
 
-func ToolcallParserDefault(resp openai.ChatCompletionResponse) (toolCalls []*FunctionCall) {
+// ToolcallParserDefault 解析新版 openai-go 返回的 ChatCompletion 中的工具调用。
+//
+// 在 openai-go v1 里，每条 ToolCall 是一个 union 类型 ChatCompletionMessageToolCallUnion，
+// 标准 function tool 的字段路径是 .Function.Name 和 .Function.Arguments（string，原始 JSON）。
+// 当模型把工具调用塞在 Content 里（XML/markdown 包裹）时，回退到字符串解析路径。
+func ToolcallParserDefault(resp *openai.ChatCompletion) (toolCalls []*FunctionCall) {
+	if resp == nil {
+		return nil
+	}
 	for _, choice := range resp.Choices {
-		for _, toolcall := range choice.Message.ToolCalls {
-			functioncall := &FunctionCall{
-				Name:      toolcall.Function.Name,
-				Arguments: toolcall.Function.Arguments,
+		for _, tc := range choice.Message.ToolCalls {
+			// Union 的 .Function 字段对 function 类型的 tool call 直接可用；
+			// 对 custom tool call，Function.Name 会是空字符串，这里就跳过。
+			name := tc.Function.Name
+			if name == "" {
+				continue
 			}
-			toolCalls = append(toolCalls, functioncall)
+			toolCalls = append(toolCalls, &FunctionCall{
+				Name:      name,
+				Arguments: tc.Function.Arguments, // 原始 JSON 字符串
+			})
 		}
 	}
+
 	if len(toolCalls) == 0 && len(resp.Choices) > 0 {
 		rsp := resp.Choices[0].Message.Content
 		ind, ind2 := strings.LastIndex(rsp, "tool_call>"), strings.LastIndex(rsp, "}")
@@ -129,7 +143,7 @@ func ToolcallParserDefault(resp openai.ChatCompletionResponse) (toolCalls []*Fun
 		rsp = toolCallReplacer.Replace(rsp)
 
 		items := strings.Split(rsp, "<tool_call>")
-		//case json only
+		// case json only
 		if len(items) > 3 {
 			items = items[1 : len(items)-1]
 		}
@@ -157,7 +171,7 @@ func ToolcallParserDefault(resp openai.ChatCompletionResponse) (toolCalls []*Fun
 }
 
 // WithToolcallParser 注册一个工具调用解析器；nil 表示使用默认解析器。
-func (a *Agent) WithToolcallParser(parse func(resp openai.ChatCompletionResponse) (toolCalls []*FunctionCall)) *Agent {
+func (a *Agent) WithToolcallParser(parse func(resp *openai.ChatCompletion) (toolCalls []*FunctionCall)) *Agent {
 	if parse == nil {
 		parse = ToolcallParserDefault
 	}

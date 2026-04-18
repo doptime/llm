@@ -6,8 +6,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/mroth/weightedrand v1.0.0
+	github.com/openai/openai-go/v3 v3.31.0
 	github.com/samber/lo v1.53.0
-	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/afero v1.15.0
 	golang.design/x/clipboard v0.7.1
 	google.golang.org/genai v1.53.0
@@ -22,6 +22,10 @@ require (
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/exp/shiny v0.0.0-20250606033433-dcc06ee1d476 // indirect

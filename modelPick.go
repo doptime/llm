@@ -179,8 +179,7 @@ func (list *ModelList) SelectOne(policy string) *Model {
 		list.SelectCursor++
 		list.mutex.Unlock()
 
-		// 移除了对最快模型的 10% 偏向逻辑 — roundrobin 就应该是严格轮询，
-		// 加权随机已有 "random" 分支承载。
+		// 严格轮询；加权随机由 "random" 分支承载
 		_ = fastestIndex
 		return list.Models[selectIndex]
 	}

@@ -10,8 +10,9 @@ import (
 	"text/template"
 	"time"
 
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/samber/lo"
-	openai "github.com/sashabaranov/go-openai"
 
 	"golang.design/x/clipboard"
 )
@@ -31,16 +32,16 @@ const (
 	UseTemplate                    string = "Template"
 )
 
-// Agent is responsible for proposing goals using an OpenAI model,
+// Agent is responsible for proposing goals using an OpenAI-compatible model,
 // handling function calls, and managing callbacks.
 type Agent struct {
 	Models                      []*Model
 	PromptTemplate              *template.Template
-	Tools                       []openai.Tool
+	Tools                       []openai.ChatCompletionToolUnionParam
 	ToolInSystemPrompt          bool
 	ToolInUserPrompt            bool
 	toolsCallbacks              map[string]func(Param interface{}, CallMemory map[string]any) error
-	functioncallParsers         []func(resp openai.ChatCompletionResponse) (toolCalls []*FunctionCall)
+	functioncallParsers         []func(resp *openai.ChatCompletion) (toolCalls []*FunctionCall)
 	CallBack                    func(ctx context.Context, inputs string) error
 	CheckToolCallsBeforeCalling func(toolCalls []*FunctionCall) error
 
@@ -53,7 +54,6 @@ func NewAgent(_template *template.Template, tools ...ToolInterface) (a *Agent) {
 		toolsCallbacks: map[string]func(Param interface{}, CallMemory map[string]any) error{},
 		PromptTemplate: _template,
 	}
-	// UseTools 原地修改，不再返回 Clone 副本
 	a.UseTools(tools...)
 	a.WithToolcallParser(nil)
 	return a
@@ -73,7 +73,7 @@ func (a *Agent) WithToolCallsCheckedBeforeCalling(checkToolCallsBeforeCalling fu
 // 如需派生独立配置的 agent，请先 Clone() 再 UseTools()。
 func (a *Agent) UseTools(tools ...ToolInterface) *Agent {
 	for _, tool := range tools {
-		a.Tools = append(a.Tools, *tool.OaiTool())
+		a.Tools = append(a.Tools, tool.OaiTool())
 		a.toolsCallbacks[tool.Name()] = tool.HandleCallback
 	}
 	return a
@@ -82,24 +82,23 @@ func (a *Agent) UseTools(tools ...ToolInterface) *Agent {
 type FieldReaderFunc func(content string) (field string)
 
 // Clone 返回 Agent 的独立副本，深拷贝 Tools / toolsCallbacks / Models / parsers。
-// 注意：Clone 不提供并发安全保证 — 如果多 goroutine 共享同一 agent，
-// 应在调用方做同步。Clone 的用途是"派生一个独立配置的 agent 实例"。
 func (a *Agent) Clone() *Agent {
 	var b Agent = *a
 	b.toolsCallbacks = make(map[string]func(interface{}, map[string]any) error, len(a.toolsCallbacks))
 	for k, v := range a.toolsCallbacks {
 		b.toolsCallbacks[k] = v
 	}
-	b.Tools = append([]openai.Tool{}, a.Tools...)
-	b.functioncallParsers = append([]func(openai.ChatCompletionResponse) []*FunctionCall{}, a.functioncallParsers...)
+	b.Tools = append([]openai.ChatCompletionToolUnionParam{}, a.Tools...)
+	b.functioncallParsers = append([]func(*openai.ChatCompletion) []*FunctionCall{}, a.functioncallParsers...)
 	b.Models = append([]*Model{}, a.Models...)
-
 	return &b
 }
+
 func (a *Agent) UseModels(Model ...*Model) *Agent {
 	a.Models = Model
 	return a
 }
+
 func (a *Agent) UseModelsNamed(Models ...string) *Agent {
 	for _, name := range Models {
 		m, ok := ModelsMap[name]
@@ -138,8 +137,8 @@ func (a *Agent) Messege(params map[string]any) string {
 	return s
 }
 
-// Call generates goals based on the provided file contents.
-// It renders the prompt, sends a request to the OpenAI model, and processes the response.
+// Call generates output by sending the rendered prompt to the chosen model and
+// dispatching any returned tool calls to their registered callbacks.
 func (a *Agent) Call(memories ...map[string]any) (err error) {
 	// 用本地副本承载本次调用的渲染上下文，避免污染调用方传入的 map，
 	// 也避免与并发的其他 Call 共享写。
@@ -187,34 +186,46 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 		params[UseModel] = model
 	}
 
-	// Create the chat completion request with function calls enabled
-	req := openai.ChatCompletionRequest{
-		Model:       model.Name,
-		Messages:    []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: messege}},
-		TopP:        model.TopP,
-		Temperature: model.Temperature,
+	// 构造请求体（新版 openai-go 使用 ChatCompletionNewParams）
+	messages := []openai.ChatCompletionMessageParamUnion{
+		openai.UserMessage(messege),
 	}
 	if model.SystemMessage != "" {
-		req.Messages = append([]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: model.SystemMessage}}, req.Messages...)
+		messages = append([]openai.ChatCompletionMessageParamUnion{openai.SystemMessage(model.SystemMessage)}, messages...)
+	}
+
+	req := openai.ChatCompletionNewParams{
+		Model:    model.Name,
+		Messages: messages,
 	}
 	if model.Temperature > 0 {
-		req.Temperature = model.Temperature
+		req.Temperature = openai.Float(model.Temperature)
 	}
 	if model.TopP > 0 {
-		req.TopP = model.TopP
+		req.TopP = openai.Float(model.TopP)
 	}
 	if len(a.Tools) > 0 {
 		if model.ToolInPrompt != nil {
+			// 把工具签名塞进 prompt（同时清空 req.Tools）
 			model.ToolInPrompt.WithToolcallSysMsg(a.Tools, &req)
 		} else {
 			req.Tools = a.Tools
 		}
 	}
 
+	// extra_body：把每个 key 通过 option.WithJSONSet 注入到 HTTP body 顶层
+	// 例如 ExtraBody = {"chat_template_kwargs": {"enable_thinking": false}}
+	// 会在请求 JSON 里出现 "chat_template_kwargs": {"enable_thinking": false}
+	var reqOpts []option.RequestOption
+	for k, v := range model.ExtraBody {
+		reqOpts = append(reqOpts, option.WithJSONSet(k, v))
+	}
+
 	if copyPromptOnly, ok := params[UseCopyPromptOnly].(bool); ok && copyPromptOnly {
-		msg := strings.Join(lo.Map(req.Messages, func(m openai.ChatCompletionMessage, _ int) string { return m.Content }), "\n")
-		err := clipboard.Init()
-		if err != nil {
+		msg := strings.Join(lo.Map(req.Messages, func(m openai.ChatCompletionMessageParamUnion, _ int) string {
+			return getMessageText(m)
+		}), "\n")
+		if err := clipboard.Init(); err != nil {
 			return fmt.Errorf("error initializing clipboard: %w", err)
 		}
 		var sb strings.Builder
@@ -228,6 +239,7 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 		clipboard.Write(clipboard.FmtText, []byte(msg))
 		return nil
 	}
+
 	timestart := time.Now()
 	reqCtx := context.Background()
 	if c, ok := params["Context"].(context.Context); ok && c != nil {
@@ -241,18 +253,31 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 	}
 
 	// loading Message response
-	var resp openai.ChatCompletionResponse
+	var resp *openai.ChatCompletion
 	msgClipboardUsed := false
 	if MsgClipboard, _ok := params[UseContentFromClipboard].(bool); _ok && MsgClipboard {
 		textbytes := clipboard.Read(clipboard.FmtText)
 		if len(textbytes) == 0 {
 			return fmt.Errorf("no data in clipboard")
 		}
-		msg := openai.ChatCompletionMessage{Role: "assistant", Content: string(textbytes)}
-		resp = openai.ChatCompletionResponse{Choices: []openai.ChatCompletionChoice{{Message: msg}}}
+		// 伪造一个 ChatCompletion，便于走完后续解析路径。
+		// 注意：在 openai-go 中 ChatCompletionMessage.Role 类型是 constant.Assistant，
+		// 不是 string，零值即 "assistant"，无需也不能显式赋值字符串。
+		resp = &openai.ChatCompletion{
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Message: openai.ChatCompletionMessage{
+						Content: string(textbytes),
+					},
+				},
+			},
+		}
 		msgClipboardUsed = true
 	} else if len(req.Messages) > 0 {
-		resp, err = model.Client.CreateChatCompletion(reqCtx, req)
+		if model.Client == nil {
+			return fmt.Errorf("model %q has no initialized client", model.Name)
+		}
+		resp, err = model.Client.Chat.Completions.New(reqCtx, req, reqOpts...)
 	} else {
 		return fmt.Errorf("no messages in request")
 	}
@@ -260,7 +285,7 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 	if err != nil {
 		fmt.Println("Error creating chat completion:", err)
 		if len(req.Messages) > 0 {
-			fmt.Println("req:", req.Messages[0].Content)
+			fmt.Println("req:", getMessageText(req.Messages[0]))
 		}
 		return err
 	}
@@ -271,7 +296,7 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 		fmt.Println("resp:", resp)
 	}
 
-	if len(resp.Choices) == 0 {
+	if resp == nil || len(resp.Choices) == 0 {
 		return fmt.Errorf("empty choices in response")
 	}
 	content := resp.Choices[0].Message.Content
@@ -285,7 +310,8 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 	}
 
 	if a.CallBack != nil {
-		a.CallBack(reqCtx, content)
+		// 与原版一致：CallBack 的错误不阻塞工具执行
+		_ = a.CallBack(reqCtx, content)
 	}
 
 	// Parse and handle function calls in the response
@@ -336,4 +362,32 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 		return fmt.Errorf("one or more tool calls failed: %w", errors.Join(toolErrs...))
 	}
 	return nil
+}
+
+// getMessageText 从 ChatCompletionMessageParamUnion 中提取一段可读文本，
+// 仅用于日志/复制到剪贴板等非语义场景。多模态内容会被简单拼接。
+func getMessageText(m openai.ChatCompletionMessageParamUnion) string {
+	switch {
+	case m.OfSystem != nil:
+		if m.OfSystem.Content.OfString.Valid() {
+			return m.OfSystem.Content.OfString.Value
+		}
+	case m.OfUser != nil:
+		if m.OfUser.Content.OfString.Valid() {
+			return m.OfUser.Content.OfString.Value
+		}
+	case m.OfAssistant != nil:
+		if m.OfAssistant.Content.OfString.Valid() {
+			return m.OfAssistant.Content.OfString.Value
+		}
+	case m.OfDeveloper != nil:
+		if m.OfDeveloper.Content.OfString.Valid() {
+			return m.OfDeveloper.Content.OfString.Value
+		}
+	case m.OfTool != nil:
+		if m.OfTool.Content.OfString.Valid() {
+			return m.OfTool.Content.OfString.Value
+		}
+	}
+	return ""
 }

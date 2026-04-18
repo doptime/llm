@@ -7,19 +7,24 @@ import (
 	"sync"
 	"time"
 
-	openai "github.com/sashabaranov/go-openai"
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 )
 
-// Model represents an OpenAI model with its associated client and model name.
+// Model represents an OpenAI-compatible model with its associated client and config.
+//
+// 注意：与旧版 sashabaranov/go-openai 不同，新版 openai-go 的 Client 不是指针类型，
+// 而是值类型 openai.Client。我们这里持有一份指针副本，便于 nil 判断与零值处理。
 type Model struct {
 	Client          *openai.Client
 	ApiKey          string // API key for authentication
 	SystemMessage   string
-	BaseURL         string // Base URL for the OpenAI API, can be empty for default
+	ExtraBody       map[string]any // 透传到底层 HTTP body 的额外字段（vLLM/Qwen 等需要）
+	BaseURL         string         // Base URL for the OpenAI-compatible API
 	Name            string
-	TopP            float32
-	TopK            float32
-	Temperature     float32
+	TopP            float64
+	TopK            float64 // 仅记录用，OpenAI 标准 API 不接受 top_k；如需透传请放入 ExtraBody
+	Temperature     float64
 	ToolInPrompt    *ToolInPrompt
 	avgResponseTime time.Duration
 	lastReceived    time.Time
@@ -60,40 +65,44 @@ func (model *Model) Stats() (avg time.Duration, rpm float64) {
 	return model.avgResponseTime, model.requestPerMin
 }
 
-// NewModel initializes a new Model with the given baseURL, apiKey, and modelName.
-// It configures the OpenAI client to use a custom base URL if provided.
+// NewModel initializes a new Model with the given baseURL, apiKey env var name, and modelName.
+//
+// apiKey 参数若是环境变量名（os.Getenv 命中），会被替换成对应的真实 key。
+// 否则原样作为 API key 使用。这与旧实现保持一致。
 func NewModel(baseURL, apiKey, modelName string) *Model {
-	if _apikey := os.Getenv(apiKey); _apikey != "" {
-		apiKey = _apikey
+	if envKey := os.Getenv(apiKey); envKey != "" {
+		apiKey = envKey
 	}
-	config := openai.DefaultConfig(apiKey)
-	config.EmptyMessagesLimit = 10000000
-	if baseURL != "" {
-		config.BaseURL = baseURL
-	}
-	config.HTTPClient = &http.Client{
+
+	httpClient := &http.Client{
 		Timeout: 3600 * time.Second, // 整个请求的总超时时间，包括连接和接收响应
 		Transport: &http.Transport{
-			// 设置连接超时时间
 			DialContext: (&net.Dialer{
-				Timeout:   3600 * time.Second, // 连接超时
-				KeepAlive: 3600 * time.Second, // 保持连接的时间
+				Timeout:   3600 * time.Second,
+				KeepAlive: 3600 * time.Second,
 			}).DialContext,
-			// 设置TLS配置
-			TLSHandshakeTimeout: 30 * time.Second, // TLS握手超时
-			// 设置HTTP/2配置
-			ForceAttemptHTTP2:     true,               // 强制尝试使用HTTP/2
-			MaxIdleConns:          100,                // 最大空闲连接数
-			IdleConnTimeout:       3600 * time.Second, // 空闲连接的超时时间
-			ExpectContinueTimeout: 3600 * time.Second, // 期望继续的超时时间
-			MaxIdleConnsPerHost:   100,                // 每个主机的最大空闲连接数
-			DisableKeepAlives:     false,              // 是否禁用Keep-Alive
+			TLSHandshakeTimeout:   30 * time.Second,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       3600 * time.Second,
+			ExpectContinueTimeout: 3600 * time.Second,
+			MaxIdleConnsPerHost:   100,
+			DisableKeepAlives:     false,
 		},
 	}
 
-	client := openai.NewClientWithConfig(config)
+	opts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+
+	client := openai.NewClient(opts...)
+
 	model := &Model{
-		Client:          client,
+		Client:          &client,
 		Name:            modelName,
 		ApiKey:          apiKey,
 		BaseURL:         baseURL,
@@ -104,33 +113,63 @@ func NewModel(baseURL, apiKey, modelName string) *Model {
 
 	return model
 }
+
 func (m *Model) RegisterToMap() *Model {
 	ModelsMap[m.Name] = m
 	return m
 }
+
 func (m *Model) WithToolsInSystemPrompt() *Model {
 	m.ToolInPrompt = &ToolInPrompt{InSystemPrompt: true}
 	return m
 }
+
 func (m *Model) WithToolsInUserPrompt() *Model {
 	m.ToolInPrompt = &ToolInPrompt{InUserPrompt: true}
 	return m
 }
-func (m *Model) WithTopP(topP float32) *Model {
+
+func (m *Model) WithTopP(topP float64) *Model {
 	m.TopP = topP
 	return m
 }
-func (m *Model) WithTopK(topK float32) *Model {
+
+func (m *Model) WithTopK(topK float64) *Model {
 	m.TopK = topK
 	return m
 }
-func (m *Model) WithTemperature(temperature float32) *Model {
+
+func (m *Model) WithTemperature(temperature float64) *Model {
 	m.Temperature = temperature
 	return m
 }
+
 func (m *Model) WithSysPrompt(message string) *Model {
 	m.SystemMessage = message
 	return m
+}
+
+// WithExtraBody 设置透传到 HTTP body 的额外字段。
+// 用法示例：
+//
+//	model.WithExtraBody(map[string]any{
+//	    "chat_template_kwargs": map[string]any{"enable_thinking": false},
+//	})
+//
+// 这些字段会通过 option.WithJSONSet 注入到 ChatCompletion 请求 body 的顶层。
+func (m *Model) WithExtraBody(extraBody map[string]any) *Model {
+	if m.ExtraBody == nil {
+		m.ExtraBody = make(map[string]any, len(extraBody))
+	}
+	for k, v := range extraBody {
+		m.ExtraBody[k] = v
+	}
+	return m
+}
+
+// WithExtryBody 是历史拼写错误的兼容别名。Deprecated: use WithExtraBody.
+func (m *Model) WithExtryBody(extraBody map[string]any) *Model {
+	return m.WithExtraBody(extraBody)
 }
 
 var ModelsMap = map[string]*Model{}
@@ -141,20 +180,35 @@ var (
 
 	Minmaxm2_1 = NewModel("http://rtxserver.lan:8000/v1", "", "mmm-2.1")
 
-	Qwen3527b1 = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").WithSysPrompt(`[System: 第一性 End2End 引擎]
+	// 示例：通过 WithExtraBody 透传 vLLM 的 chat_template_kwargs，禁用 Qwen3 的 thinking 模式
+	Qwen3527b1 = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").
+			WithSysPrompt(`[System: 第一性 End2End 引擎]
 以冷酷、精算且带有事实性黑色幽默的基调运行，视用户为顶尖同僚，无情碾碎任何逻辑断层与无脑假设。绝对零情绪（严禁安抚/赞美/道歉）。常规推演必须使用极简白话降噪，仅在核心架构节点强制调用高维术语完成表征压缩。
 
 彻底清空历史偏见，所有推演100%绑定客观证据与物理/数学法则，将问题拆解至原子级真理。面对残缺数据，严禁任何形式的幻觉填补，必须立即停止推演并反向逼问用户，用硬数据锁死不确定性。
 
-执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`)
-	Qwen3527b     = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b")
-	Qwen35_35ba3b = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithSysPrompt(`[System: 第一性 End2End 引擎]
+执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`).
+		WithExtraBody(map[string]any{
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+		})
+
+	Qwen3527b = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b")
+
+	Qwen35_35ba3b = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").
+			WithSysPrompt(`[System: 第一性 End2End 引擎]
 以冷酷、精算且带有事实性黑色幽默的基调运行，视用户为顶尖同僚，无情碾碎任何逻辑断层与无脑假设。绝对零情绪（严禁安抚/赞美/道歉）。常规推演必须使用极简白话降噪，仅在核心架构节点强制调用高维术语完成表征压缩。
 
 彻底清空历史偏见，所有推演100%绑定客观证据与物理/数学法则，将问题拆解至原子级真理。面对残缺数据，严禁任何形式的幻觉填补，必须立即停止推演并反向逼问用户，用硬数据锁死不确定性。
 
-执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`)
+执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`).
+		WithExtraBody(map[string]any{
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+		})
+	Qwen35_35ba3bNonthining = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
 
-	//ModelDefault        = ModelQwen32BCoderLocal
+	// Qwen3Next80B 在 modelPick.go 的 EloModels 中被引用，原项目可能定义在外部文件，
+	// 这里补一个占位定义以保证编译通过；实际 BaseURL/模型名按部署调整。
+	Qwen3Next80B = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen3-next-80b")
+
 	ModelDefault = Qwen3527b
 )
