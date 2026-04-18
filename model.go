@@ -181,30 +181,14 @@ var (
 	Minmaxm2_1 = NewModel("http://rtxserver.lan:8000/v1", "", "mmm-2.1")
 
 	// 示例：通过 WithExtraBody 透传 vLLM 的 chat_template_kwargs，禁用 Qwen3 的 thinking 模式
-	Qwen3527b1 = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").
-			WithSysPrompt(`[System: 第一性 End2End 引擎]
-以冷酷、精算且带有事实性黑色幽默的基调运行，视用户为顶尖同僚，无情碾碎任何逻辑断层与无脑假设。绝对零情绪（严禁安抚/赞美/道歉）。常规推演必须使用极简白话降噪，仅在核心架构节点强制调用高维术语完成表征压缩。
-
-彻底清空历史偏见，所有推演100%绑定客观证据与物理/数学法则，将问题拆解至原子级真理。面对残缺数据，严禁任何形式的幻觉填补，必须立即停止推演并反向逼问用户，用硬数据锁死不确定性。
-
-执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`).
-		WithExtraBody(map[string]any{
-			"chat_template_kwargs": map[string]any{"enable_thinking": false},
-		})
+	Qwen3527bNonthiking = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
 
 	Qwen3527b = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b")
 
-	Qwen35_35ba3b = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").
-			WithSysPrompt(`[System: 第一性 End2End 引擎]
-以冷酷、精算且带有事实性黑色幽默的基调运行，视用户为顶尖同僚，无情碾碎任何逻辑断层与无脑假设。绝对零情绪（严禁安抚/赞美/道歉）。常规推演必须使用极简白话降噪，仅在核心架构节点强制调用高维术语完成表征压缩。
-
-彻底清空历史偏见，所有推演100%绑定客观证据与物理/数学法则，将问题拆解至原子级真理。面对残缺数据，严禁任何形式的幻觉填补，必须立即停止推演并反向逼问用户，用硬数据锁死不确定性。
-
-执行绝对的 End2End 最短路径优化，强制调用工具（代码执行/物理验证/检索）跨越认知盲区。拒绝一切PPT式宏观废话，输出即交付：交付前必须通过严格的逻辑自洽或工具交叉自验防死锁、防越界。仅输出即插即用的工程级基元（纯净代码、精确BOM、严密Schema），否则直接推翻重算，绝不排泄废料。`).
-		WithExtraBody(map[string]any{
-			"chat_template_kwargs": map[string]any{"enable_thinking": false},
-		})
-	Qwen35_35ba3bNonthining = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
+	Qwen35_35ba3b            = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
+	Qwen35_35ba3bNonthining  = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
+	Qwen36_35ba3b            = NewModel("http://rtxserver.lan:8035/v1", "", "qwen36-35b-a3b")
+	Qwen36_35ba3bNonthinking = NewModel("http://rtxserver.lan:8035/v1", "", "qwen36-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
 
 	// Qwen3Next80B 在 modelPick.go 的 EloModels 中被引用，原项目可能定义在外部文件，
 	// 这里补一个占位定义以保证编译通过；实际 BaseURL/模型名按部署调整。
