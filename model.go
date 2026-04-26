@@ -175,18 +175,12 @@ func (m *Model) WithExtryBody(extraBody map[string]any) *Model {
 var ModelsMap = map[string]*Model{}
 
 var (
-	Qwen3Coder30B2507 = NewModel("http://rtxserver.lan:12304/v1", "ApiKey", "qwen3coder30b2507")
-	Glm45AirLocal     = NewModel("http://rtxserver.lan:12303/v1", "ApiKey", "GLM-4.5-Air").WithToolsInSystemPrompt()
-
 	Minmaxm2_1 = NewModel("http://rtxserver.lan:8000/v1", "", "mmm-2.1")
 
 	// 示例：通过 WithExtraBody 透传 vLLM 的 chat_template_kwargs，禁用 Qwen3 的 thinking 模式
-	Qwen3527bNonthiking = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
+	Qwen3627bNonthiking = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen36-27b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
 
-	Qwen3527b = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen35-27b")
-
-	Qwen35_35ba3b            = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
-	Qwen35_35ba3bNonthining  = NewModel("http://rtxserver.lan:8035/v1", "", "qwen35-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
+	Qwen3627b                = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen36-27b")
 	Qwen36_35ba3b            = NewModel("http://rtxserver.lan:8035/v1", "", "qwen36-35b-a3b")
 	Qwen36_35ba3bNonthinking = NewModel("http://rtxserver.lan:8035/v1", "", "qwen36-35b-a3b").WithExtraBody(map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}})
 
@@ -194,5 +188,5 @@ var (
 	// 这里补一个占位定义以保证编译通过；实际 BaseURL/模型名按部署调整。
 	Qwen3Next80B = NewModel("http://rtxserver.lan:8000/v1", "ApiKey", "qwen3-next-80b")
 
-	ModelDefault = Qwen3527b
+	ModelDefault = Qwen3627b
 )
