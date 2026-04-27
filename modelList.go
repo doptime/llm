@@ -87,7 +87,7 @@ var EloModels = ModelList{
 	Name: "EloModels",
 	Models: []*Model{
 		Qwen3Next80B,
-		Qwen35_35ba3b,
+		Qwen36_35ba3b,
 	},
 }
 
