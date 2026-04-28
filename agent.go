@@ -37,6 +37,7 @@ const (
 type Agent struct {
 	Models                      []*Model
 	PromptTemplate              *template.Template
+	MaxCompletionTokens         int
 	Tools                       []openai.ChatCompletionToolUnionParam
 	ToolInSystemPrompt          bool
 	ToolInUserPrompt            bool
@@ -77,6 +78,13 @@ func (a *Agent) UseTools(tools ...ToolInterface) *Agent {
 		a.toolsCallbacks[tool.Name()] = tool.HandleCallback
 	}
 	return a
+}
+
+func (a *Agent) UseMaxTokens(maxTokens int) *Agent {
+	var b Agent
+	b = *a
+	b.MaxCompletionTokens = maxTokens
+	return &b
 }
 
 type FieldReaderFunc func(content string) (field string)
@@ -203,6 +211,10 @@ func (a *Agent) Call(memories ...map[string]any) (err error) {
 	}
 	if model.TopP > 0 {
 		req.TopP = openai.Float(model.TopP)
+	}
+	if a.MaxCompletionTokens > 0 {
+		// 对应 openai-go v3 的参数字段
+		req.MaxTokens = openai.Opt(int64(a.MaxCompletionTokens))
 	}
 	if len(a.Tools) > 0 {
 		if model.ToolInPrompt != nil {
