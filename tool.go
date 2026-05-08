@@ -57,7 +57,6 @@ func (t *Tool[v]) HandleCallback(Param interface{}, CallMemory map[string]any) (
 			return err
 		}
 	}
-
 	var val v
 	err = json.Unmarshal(parambytes, &val) // 直接反序列化到 v 的地址
 	if err != nil {
@@ -75,7 +74,6 @@ func (t *Tool[v]) HandleCallback(Param interface{}, CallMemory map[string]any) (
 	for _, f := range t.Functions {
 		f(val)
 	}
-
 	if CallMemory != nil {
 		// 确保传入的是一个 struct
 		rv := reflect.ValueOf(val)
@@ -100,7 +98,6 @@ func (t *Tool[v]) HandleCallback(Param interface{}, CallMemory map[string]any) (
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -112,7 +109,6 @@ func getFieldName(field reflect.StructField) string {
 	}
 	parts := strings.Split(jsonTag, ",")
 	name := strings.TrimSpace(parts[0])
-
 	if name == "-" {
 		return "-"
 	}
@@ -120,6 +116,26 @@ func getFieldName(field reflect.StructField) string {
 		return field.Name
 	}
 	return name
+}
+
+// getFieldDescription 抽取字段描述。优先级:
+//
+//  1. description tag(标准命名,推荐)
+//  2. jsonschema tag(向后兼容)
+//  3. comment tag(向后兼容旧代码,新代码不应使用)
+//
+// 如果 description tag 显式为 "-",则跳过该字段;返回值由调用方处理。
+func getFieldDescription(field reflect.StructField) string {
+	if d := field.Tag.Get("description"); d != "" {
+		return d
+	}
+	if d := field.Tag.Get("jsonschema"); d != "" {
+		return d
+	}
+	if d := field.Tag.Get("comment"); d != "" {
+		return d
+	}
+	return ""
 }
 
 // NewTool creates a new tool, correctly generating schemas for nested structs and slices.
@@ -132,19 +148,16 @@ func NewTool[v any](name string, description string, fs ...func(param v)) *Tool[
 	oaiProperties := make(map[string]any)
 	googleProperties := make(map[string]*genai.Schema)
 	var requiredFields []string
-
 	visited := make(map[reflect.Type]bool)
 
 	if vType.Kind() == reflect.Struct {
 		for i := 0; i < vType.NumField(); i++ {
 			field := vType.Field(i)
-			desc := field.Tag.Get("description")
-			if desc == "-" {
+			// description tag 显式为 "-" 的字段被排除
+			if field.Tag.Get("description") == "-" {
 				continue
 			}
-			if desc == "" {
-				desc = field.Tag.Get("jsonschema")
-			}
+			desc := getFieldDescription(field)
 
 			paramName := getFieldName(field)
 			if paramName == "-" {
@@ -152,10 +165,8 @@ func NewTool[v any](name string, description string, fs ...func(param v)) *Tool[
 			}
 
 			fieldOAI, fieldGoogle := buildSchemaForType(field.Type, visited)
-
 			fieldOAI["description"] = desc
 			fieldGoogle.Description = desc
-
 			oaiProperties[paramName] = fieldOAI
 			googleProperties[paramName] = fieldGoogle
 
@@ -182,6 +193,9 @@ func NewTool[v any](name string, description string, fs ...func(param v)) *Tool[
 		Type:       genai.TypeObject,
 		Properties: googleProperties,
 	}
+	if len(requiredFields) > 0 {
+		googleSchema.Required = requiredFields
+	}
 
 	funcDef := openai.FunctionDefinitionParam{
 		Name:        name,
@@ -203,7 +217,21 @@ func NewTool[v any](name string, description string, fs ...func(param v)) *Tool[
 }
 
 // buildSchemaForType is the recursive helper. It generates the schema for any given type.
-// Added visited map to prevent stack overflow on recursive types.
+//
+// 修订记录:
+//
+//   - 增加 reflect.Map 分支:
+//     OpenAI 端通过 additionalProperties 描述 value 类型,这是标准 JSON Schema
+//     用法,所有 OpenAI 协议兼容的模型(GPT/Qwen/Claude OpenAI 模式)都认。
+//
+//     Google genai.Schema 是 OpenAPI 3.0 的"select subset",目前没有暴露
+//     AdditionalProperties 字段,所以 Google 端只能退化为不带 value-type 提示
+//     的空 object schema。Gemini API 本身从 2025-11 起支持 additionalProperties,
+//     但 Go SDK 还没把字段补上(参见 googleapis/python-genai#1815 类似情况);
+//     等 google.golang.org/genai 加上字段后,可在此处补上 Google 端的实现。
+//
+//   - 非 string 键的 map(如 map[int]string)无法表达为合法 JSON object,
+//     此时退化为不带 additionalProperties 的空 object 并打 warning。
 func buildSchemaForType(t reflect.Type, visited map[reflect.Type]bool) (map[string]any, *genai.Schema) {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -217,7 +245,6 @@ func buildSchemaForType(t reflect.Type, visited map[reflect.Type]bool) (map[stri
 		googleSchema.Type = genai.TypeObject
 		return oaiSchema, googleSchema
 	}
-
 	visited[t] = true
 	defer func() { delete(visited, t) }() // Backtracking: allow same type in sibling branches
 
@@ -228,16 +255,13 @@ func buildSchemaForType(t reflect.Type, visited map[reflect.Type]bool) (map[stri
 	case reflect.Struct:
 		oaiProperties := make(map[string]any)
 		googleProperties := make(map[string]*genai.Schema)
-
+		var requiredFields []string
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-			desc := field.Tag.Get("description")
-			if desc == "-" {
+			if field.Tag.Get("description") == "-" {
 				continue
 			}
-			if desc == "" {
-				desc = field.Tag.Get("jsonschema")
-			}
+			desc := getFieldDescription(field)
 
 			paramName := getFieldName(field)
 			if paramName == "-" {
@@ -245,21 +269,41 @@ func buildSchemaForType(t reflect.Type, visited map[reflect.Type]bool) (map[stri
 			}
 
 			subOAI, subGoogle := buildSchemaForType(field.Type, visited)
-
 			subOAI["description"] = desc
 			subGoogle.Description = desc
-
 			oaiProperties[paramName] = subOAI
 			googleProperties[paramName] = subGoogle
+
+			jsonTag := field.Tag.Get("json")
+			isOptional := strings.Contains(jsonTag, "omitempty") || field.Tag.Get("required") == "false"
+			if !isOptional {
+				requiredFields = append(requiredFields, paramName)
+			}
 		}
 		oaiSchema["properties"] = oaiProperties
 		googleSchema.Properties = googleProperties
+		if len(requiredFields) > 0 {
+			googleSchema.Required = requiredFields
+		}
 
 	case reflect.Slice, reflect.Array:
 		elemType := t.Elem()
 		itemsOAI, itemsGoogle := buildSchemaForType(elemType, visited)
 		oaiSchema["items"] = itemsOAI
 		googleSchema.Items = itemsGoogle
+
+	case reflect.Map:
+		// JSON 对象的键必须是字符串,这里要求 Go 的 map key 也是 string。
+		if t.Key().Kind() != reflect.String {
+			log.Printf("Warning: map with non-string key (key kind=%s) cannot be expressed as JSON object schema. Falling back to bare object.", t.Key().Kind())
+			break
+		}
+		// OpenAI 端:JSON Schema 标准的 additionalProperties 描述每个 value 的形态。
+		valOAI, _ := buildSchemaForType(t.Elem(), visited)
+		oaiSchema["additionalProperties"] = valOAI
+		// Google 端:genai.Schema 当前没有暴露 AdditionalProperties 字段,
+		// 退化为 plain object schema (只有 Type=Object)。Gemini 仍能产生
+		// 任意键的 object,只是少了 value 形态提示。
 	}
 
 	return oaiSchema, googleSchema
